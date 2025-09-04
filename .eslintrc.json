@@ -1,5 +1,6 @@
 {
   "extends": "next/core-web-vitals",
+  "ignorePatterns": ["lib/generated/prisma/**"],
   "overrides": [
     {
       "files": [
