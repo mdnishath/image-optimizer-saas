@@ -1,0 +1,17 @@
+{
+  "extends": "next/core-web-vitals",
+  "overrides": [
+    {
+      "files": [
+        "lib/generated/prisma/**/*.ts",
+        "lib/generated/prisma/**/*.d.ts"
+      ],
+      "rules": {
+        "@typescript-eslint/no-empty-object-type": "off",
+        "@typescript-eslint/no-unnecessary-type-constraint": "off",
+        "@typescript-eslint/no-unsafe-function-type": "off",
+        "@typescript-eslint/no-wrapper-object-types": "off"
+      }
+    }
+  ]
+}

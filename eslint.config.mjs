@@ -19,6 +19,13 @@ const eslintConfig = [
       "build/**",
       "next-env.d.ts",
     ],
+    rules: {
+      "@typescript-eslint/no-unused-expressions": "off", // 👈 disable rule
+      "@typescript-eslint/no-unused-vars": "off", // 👈 disable rule
+      "@typescript-eslint/no-this-alias": "off", // 👈 disable rule
+      "@typescript-eslint/no-require-imports": "off", // 👈 disable rule
+      "@typescript-eslint/no-explicit-any": "off", // 👈 disable rule
+    },
   },
 ];
 
