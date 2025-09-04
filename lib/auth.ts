@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import prisma from "@/lib/prisma";
 import jwt, { JwtPayload } from "jsonwebtoken";
 
 export async function getUserFromRequest(req: Request) {
