@@ -1,5 +1,5 @@
-import prisma from "@/lib/prisma";
 import jwt, { JwtPayload } from "jsonwebtoken";
+import prisma from "./prisma";
 
 export async function getUserFromRequest(req: Request) {
   // 1. API Key (for WordPress plugin / Freemius license)

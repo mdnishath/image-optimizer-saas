@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+
 import jwt, { JwtPayload } from "jsonwebtoken";
 import { generateAccessToken, generateRefreshToken } from "@/lib/jwt";
+import prisma from "@/lib/prisma";
 
 export async function POST(req: Request) {
   try {
