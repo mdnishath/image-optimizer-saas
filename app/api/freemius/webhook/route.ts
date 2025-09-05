@@ -10,30 +10,43 @@ interface FreemiusWebhookBody {
   license?: { key: string };
 }
 
-// ✅ verify Freemius signature
-function verifySignature(payload: string, signature: string | null): boolean {
-  if (!signature) return false;
+// ✅ compute signature
+function computeSignature(payload: string): string {
   const hmac = crypto.createHmac(
     "sha256",
     process.env.FREEMIUS_SECRET_KEY as string
   );
   hmac.update(payload, "utf-8");
-  return hmac.digest("hex") === signature;
+  return hmac.digest("hex");
 }
 
 export async function POST(req: Request) {
   try {
     const rawBody = await req.text();
-    const signature = req.headers.get("x-fs-signature");
+    const receivedSignature = req.headers.get("x-fs-signature");
+    const expectedSignature = computeSignature(rawBody);
 
-    if (!verifySignature(rawBody, signature)) {
-      console.error("❌ Invalid Freemius signature");
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+    console.log("📩 Freemius webhook received");
+    console.log(
+      "🔑 FREEMIUS_SECRET_KEY (first 6 chars):",
+      process.env.FREEMIUS_SECRET_KEY?.slice(0, 6)
+    );
+    console.log("📦 Raw body:", rawBody);
+    console.log("📬 Signature from Freemius:", receivedSignature);
+    console.log("🧮 Signature we computed:", expectedSignature);
+
+    // Compare signatures
+    if (receivedSignature !== expectedSignature) {
+      console.error("❌ Invalid signature - mismatch");
+      // ⚠️ return 200 so Freemius doesn’t disable webhook during testing
+      return NextResponse.json(
+        { error: "Invalid signature", receivedSignature, expectedSignature },
+        { status: 200 }
+      );
     }
 
+    // ✅ parse payload if signature matches
     const body = JSON.parse(rawBody) as FreemiusWebhookBody;
-    console.log("📩 Freemius webhook payload:", body);
-
     const { event, user, plan_id, plan, license } = body;
     if (!user?.email) {
       return NextResponse.json({ error: "No user email" }, { status: 400 });
@@ -42,7 +55,6 @@ export async function POST(req: Request) {
     // normalize planId
     const planId = plan_id || plan?.id;
     let credits = 0;
-
     switch (planId) {
       case "34244":
         credits = 100;
@@ -60,7 +72,6 @@ export async function POST(req: Request) {
         console.warn("⚠️ Unknown planId:", planId);
     }
 
-    // ✅ update only when subscription/payment confirmed
     if (event === "subscription.created" || event === "payment.completed") {
       if (credits > 0) {
         const updated = await prisma.user.upsert({
