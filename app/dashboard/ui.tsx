@@ -62,7 +62,7 @@ export default function DashboardPage() {
     let res: Response;
 
     if (file.size < 4 * 1024 * 1024) {
-      // Small → direct
+      // ✅ Small file (<4MB) → direct upload to API
       res = await fetch("/api/images/optimize", {
         method: "POST",
         headers: {
@@ -73,22 +73,30 @@ export default function DashboardPage() {
         body: file,
       });
     } else {
-      // Big → upload first
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const uploadRes = await fetch("/api/images/upload", {
+      // ✅ Big file → use signed upload URL
+      const urlRes = await fetch("/api/images/get-upload-url", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, contentType: file.type }),
       });
-
-      const uploadData = await uploadRes.json();
-      if (!uploadRes.ok) {
-        alert("Upload failed: " + uploadData.error);
+      const { path, uploadUrl, error } = await urlRes.json();
+      if (error) {
+        alert("Failed to get upload URL");
         return;
       }
 
-      // Optimize by path
+      // Upload directly to Supabase storage
+      const putRes = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+      if (!putRes.ok) {
+        alert("Upload failed");
+        return;
+      }
+
+      // Then call optimize with just the path
       res = await fetch("/api/images/optimize", {
         method: "POST",
         headers: {
@@ -97,7 +105,7 @@ export default function DashboardPage() {
           "x-format": format,
           "x-quality": quality.toString(),
         },
-        body: JSON.stringify({ path: uploadData.path }),
+        body: JSON.stringify({ path }),
       });
     }
 
