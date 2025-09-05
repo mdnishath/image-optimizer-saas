@@ -29,7 +29,7 @@ export default function DashboardPage() {
   const accessToken =
     typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
 
-  // ✅ Load credits + user info
+  // ✅ Load user info
   useEffect(() => {
     if (!accessToken) {
       router.push("/login");
@@ -62,7 +62,7 @@ export default function DashboardPage() {
     let res: Response;
 
     if (file.size < 4 * 1024 * 1024) {
-      // Small file → direct optimize
+      // Small → direct
       res = await fetch("/api/images/optimize", {
         method: "POST",
         headers: {
@@ -73,7 +73,7 @@ export default function DashboardPage() {
         body: file,
       });
     } else {
-      // Big file → upload first via secure API
+      // Big → upload first
       const formData = new FormData();
       formData.append("file", file);
 
@@ -88,7 +88,7 @@ export default function DashboardPage() {
         return;
       }
 
-      // Then optimize by path
+      // Optimize by path
       res = await fetch("/api/images/optimize", {
         method: "POST",
         headers: {
@@ -164,8 +164,6 @@ export default function DashboardPage() {
           ) : (
             "Loading..."
           )}
-
-          {/* Plan selector + Freemius Buy button */}
           {userEmail && (
             <div className="mt-6">
               <label className="block text-sm font-medium mb-2">
@@ -182,7 +180,6 @@ export default function DashboardPage() {
                   </option>
                 ))}
               </select>
-
               <div className="mt-4">
                 <BuyCreditsButton planId={selectedPlan} userEmail={userEmail} />
               </div>
@@ -202,7 +199,6 @@ export default function DashboardPage() {
             accept="image/*"
             onChange={(e) => setFile(e.target.files?.[0] || null)}
           />
-
           <div className="flex gap-4">
             <select
               value={format}
@@ -214,7 +210,6 @@ export default function DashboardPage() {
               <option value="jpeg">JPEG</option>
               <option value="png">PNG</option>
             </select>
-
             <div className="flex-1">
               <label className="text-sm font-medium">Quality: {quality}</label>
               <input
@@ -227,7 +222,6 @@ export default function DashboardPage() {
               />
             </div>
           </div>
-
           <Button className="w-full" onClick={handleOptimize} disabled={!file}>
             Optimize
           </Button>
@@ -256,7 +250,6 @@ export default function DashboardPage() {
               )}
             </CardContent>
           </Card>
-
           <Card>
             <CardHeader>
               <CardTitle>Optimized</CardTitle>
@@ -265,10 +258,10 @@ export default function DashboardPage() {
               {optimizedUrl ? (
                 <>
                   <Image
-                    src={optimizedUrl}
-                    alt="optimized"
                     width={400}
                     height={300}
+                    src={optimizedUrl}
+                    alt="optimized"
                     className="rounded-lg"
                   />
                   {stats && (
