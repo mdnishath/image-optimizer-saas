@@ -3,14 +3,14 @@ import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
 
 interface FreemiusWebhookBody {
-  event: string;
-  user?: { email: string };
+  type: string;
+  user_id?: string;
   plan_id?: string;
   plan?: { id: string };
+  objects?: { user?: { email: string; public_key?: string } };
   license?: { key: string };
 }
 
-// ✅ compute signature
 function computeSignature(payload: string): string {
   const hmac = crypto.createHmac(
     "sha256",
@@ -26,39 +26,42 @@ export async function POST(req: Request) {
     const receivedSignature = req.headers.get("x-fs-signature");
     const expectedSignature = computeSignature(rawBody);
 
+    // Log everything
     console.log("📩 Freemius webhook received");
-    console.log(
-      "🔑 FREEMIUS_SECRET_KEY (first 6 chars):",
-      process.env.FREEMIUS_SECRET_KEY?.slice(0, 6)
-    );
     console.log("📦 Raw body:", rawBody);
     console.log("📬 Signature from Freemius:", receivedSignature);
     console.log("🧮 Signature we computed:", expectedSignature);
 
-    // Compare signatures
-    if (receivedSignature !== expectedSignature) {
-      console.error("❌ Invalid signature - mismatch");
-      // ⚠️ return 200 so Freemius doesn’t disable webhook during testing
-      return NextResponse.json(
-        { error: "Invalid signature", receivedSignature, expectedSignature },
-        { status: 200 }
-      );
+    // Allow unsigned events (like user.created)
+    if (receivedSignature) {
+      if (receivedSignature.toLowerCase() !== expectedSignature.toLowerCase()) {
+        console.error("❌ Invalid signature - mismatch");
+        return NextResponse.json(
+          { error: "Invalid signature" },
+          { status: 401 }
+        );
+      }
+      console.log("✅ Signature valid");
+    } else {
+      console.warn("⚠️ No signature received, accepting unsigned event");
     }
 
-    // ✅ parse payload if signature matches
+    // Parse body
     const body = JSON.parse(rawBody) as FreemiusWebhookBody;
-    const { event, user, plan_id, plan, license } = body;
-    if (!user?.email) {
+    const { type, plan_id, plan, objects, license } = body;
+    const userEmail = objects?.user?.email;
+
+    if (!userEmail) {
       return NextResponse.json({ error: "No user email" }, { status: 400 });
     }
 
-    // normalize planId
+    // Decide credits based on plan
     const planId = plan_id || plan?.id;
     let credits = 0;
     switch (planId) {
       case "34244":
         credits = 100;
-        break; // Free
+        break; // Free plan
       case "34240":
         credits = 5000;
         break; // Optimizer 5K
@@ -69,25 +72,41 @@ export async function POST(req: Request) {
         credits = 1000000;
         break; // Optimizer 1M
       default:
-        console.warn("⚠️ Unknown planId:", planId);
+        credits = 0;
+        break;
     }
 
-    if (event === "subscription.created" || event === "payment.completed") {
+    // Only update on subscription.created / payment.completed
+    if (type === "subscription.created" || type === "payment.completed") {
       if (credits > 0) {
-        const updated = await prisma.user.upsert({
-          where: { email: user.email },
+        await prisma.user.upsert({
+          where: { email: userEmail },
           update: {
             credits: { increment: credits },
-            apiKey: license?.key ?? undefined,
+            apiKey: license?.key ?? objects?.user?.public_key ?? undefined,
           },
           create: {
-            email: user.email,
+            email: userEmail,
             credits,
-            apiKey: license?.key ?? null,
+            apiKey: license?.key ?? objects?.user?.public_key ?? null,
           },
         });
-        console.log("✅ User credits updated:", updated.email, updated.credits);
+        console.log(`✅ Updated credits for ${userEmail} (+${credits})`);
       }
+    }
+
+    // Optional: create user record when free plan joined
+    if (type === "user.created" && credits > 0) {
+      await prisma.user.upsert({
+        where: { email: userEmail },
+        update: {},
+        create: {
+          email: userEmail,
+          credits,
+          apiKey: objects?.user?.public_key ?? null,
+        },
+      });
+      console.log(`✅ Created free user ${userEmail} with ${credits} credits`);
     }
 
     return NextResponse.json({ ok: true });
