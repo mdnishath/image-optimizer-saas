@@ -40,9 +40,10 @@ export default function BuyCreditsButton({
     handler.open({
       user_email: userEmail,
       readonly_user: true,
-      // 👇 no success fetch, rely only on webhook
       success: () => {
-        alert("✅ Purchase successful! Credits will update shortly.");
+        alert(
+          "✅ Purchase successful! Credits will update shortly after webhook processing."
+        );
       },
     });
   };

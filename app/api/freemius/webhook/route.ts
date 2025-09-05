@@ -44,10 +44,18 @@ export async function POST(req: Request) {
     let credits = 0;
 
     switch (planId) {
-      case "34244": credits = 100; break;       // Free
-      case "34240": credits = 5000; break;      // Optimizer 5K
-      case "34242": credits = 20000; break;     // Optimizer 20K
-      case "34243": credits = 1000000; break;   // Optimizer 1M
+      case "34244":
+        credits = 100;
+        break; // Free
+      case "34240":
+        credits = 5000;
+        break; // Optimizer 5K
+      case "34242":
+        credits = 20000;
+        break; // Optimizer 20K
+      case "34243":
+        credits = 1000000;
+        break; // Optimizer 1M
       default:
         console.warn("⚠️ Unknown planId:", planId);
     }

@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { plans } from "@/lib/plans"; // ✅ plan list with IDs, credits, price
+import { plans } from "@/lib/plans"; // ✅ your plan list
 import BuyCreditsButton from "@/components/ui/BuyCreditsButton";
 import Image from "next/image";
 
@@ -91,7 +91,7 @@ export default function DashboardPage() {
       setProgress(100);
       setTimeout(() => setProgress(0), 1500);
 
-      // refresh credits
+      // refresh credits count (just read DB, not update)
       const creditRes = await fetch("/api/user/credits", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
@@ -154,19 +154,7 @@ export default function DashboardPage() {
               </select>
 
               <div className="mt-4">
-                <BuyCreditsButton
-                  planId={selectedPlan}
-                  userEmail={userEmail}
-                  onPurchaseSuccess={async () => {
-                    if (accessToken) {
-                      const res = await fetch("/api/user/credits", {
-                        headers: { Authorization: `Bearer ${accessToken}` },
-                      });
-                      const data = await res.json();
-                      setCredits(data.credits);
-                    }
-                  }}
-                />
+                <BuyCreditsButton planId={selectedPlan} userEmail={userEmail} />
               </div>
             </div>
           )}
@@ -228,11 +216,11 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent>
               <Image
-                src={originalUrl!}
-                alt="original"
+                src={originalUrl}
                 width={400}
                 height={300}
-                className="rounded-lg shadow-sm"
+                alt="original"
+                className="rounded-lg shadow-sm max-w-full h-auto"
               />
               {stats && (
                 <p className="text-sm mt-2 text-gray-600">
@@ -251,11 +239,11 @@ export default function DashboardPage() {
               {optimizedUrl ? (
                 <>
                   <Image
-                    src={originalUrl!}
-                    alt="original"
+                    src={optimizedUrl}
                     width={400}
                     height={300}
-                    className="rounded-lg shadow-sm"
+                    alt="optimized"
+                    className="rounded-lg shadow-sm max-w-full h-auto"
                   />
                   {stats && (
                     <p className="text-sm mt-2 text-green-600">
