@@ -11,13 +11,11 @@ declare global {
 interface BuyCreditsButtonProps {
   planId: string;
   userEmail: string;
-  onPurchaseSuccess?: () => void; // 👈 notify parent
 }
 
 export default function BuyCreditsButton({
   planId,
   userEmail,
-  onPurchaseSuccess,
 }: BuyCreditsButtonProps) {
   useEffect(() => {
     const script = document.createElement("script");
@@ -42,20 +40,9 @@ export default function BuyCreditsButton({
     handler.open({
       user_email: userEmail,
       readonly_user: true,
-      success: async (response: any) => {
-        await fetch("/api/freemius/success", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...response,
-            plan_id: planId,
-          }),
-        });
-
-        // 👇 tell dashboard to refresh credits
-        if (onPurchaseSuccess) {
-          onPurchaseSuccess();
-        }
+      // 👇 no success fetch, rely only on webhook
+      success: () => {
+        alert("✅ Purchase successful! Credits will update shortly.");
       },
     });
   };
