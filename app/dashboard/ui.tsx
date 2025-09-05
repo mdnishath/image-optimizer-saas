@@ -6,9 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { plans } from "@/lib/plans"; // ✅ your plan list
+import { plans } from "@/lib/plans";
 import BuyCreditsButton from "@/components/ui/BuyCreditsButton";
-import Image from "next/image";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -19,6 +18,7 @@ export default function DashboardPage() {
   const [quality, setQuality] = useState(80);
   const [originalUrl, setOriginalUrl] = useState<string | null>(null);
   const [optimizedUrl, setOptimizedUrl] = useState<string | null>(null);
+  const [optimizedPath, setOptimizedPath] = useState<string | null>(null); // ✅ store Supabase file path
   const [progress, setProgress] = useState(0);
   const [stats, setStats] = useState<{ before: number; after: number } | null>(
     null
@@ -29,7 +29,7 @@ export default function DashboardPage() {
   const accessToken =
     typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
 
-  // ✅ Load user info (credits + email)
+  // ✅ Load user info
   useEffect(() => {
     if (!accessToken) {
       router.push("/login");
@@ -55,6 +55,16 @@ export default function DashboardPage() {
   const handleOptimize = async () => {
     if (!file || !accessToken) return;
 
+    // If there’s an old optimized file on Supabase → delete it first
+    if (optimizedPath) {
+      await fetch("/api/images/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: optimizedPath }),
+      });
+      setOptimizedPath(null);
+    }
+
     setOriginalUrl(URL.createObjectURL(file));
     setOptimizedUrl(null);
     setStats(null);
@@ -75,8 +85,14 @@ export default function DashboardPage() {
     if (res.ok) {
       const data = await res.json();
 
-      setOptimizedUrl(data.file);
+      const finalUrl = data.downloadUrl || data.file;
+      setOptimizedUrl(finalUrl);
       setStats({ before: data.sizeBefore, after: data.sizeAfter });
+
+      // Save Supabase path if returned
+      if (data.path) {
+        setOptimizedPath(data.path);
+      }
 
       const newLog = {
         id: Date.now(),
@@ -84,19 +100,40 @@ export default function DashboardPage() {
         sizeBefore: data.sizeBefore,
         sizeAfter: data.sizeAfter,
         createdAt: new Date().toISOString(),
-        fileUrl: data.file,
+        fileUrl: finalUrl,
       };
       setHistory((prev) => [newLog, ...prev]);
 
       setProgress(100);
       setTimeout(() => setProgress(0), 1500);
 
-      // refresh credits count (just read DB, not update)
+      // refresh credits
       const creditRes = await fetch("/api/user/credits", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       const creditData = await creditRes.json();
       setCredits(creditData.credits);
+    }
+  };
+
+  // ✅ Trigger delete on download
+  const handleDownload = async () => {
+    if (optimizedUrl) {
+      const link = document.createElement("a");
+      link.href = optimizedUrl;
+      link.download = `optimized.${format}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      if (optimizedPath) {
+        await fetch("/api/images/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: optimizedPath }),
+        });
+        setOptimizedPath(null);
+      }
     }
   };
 
@@ -117,7 +154,7 @@ export default function DashboardPage() {
         </Button>
       </div>
 
-      {/* Credits */}
+      {/* Credits + Buy */}
       <Card>
         <CardHeader>
           <CardTitle>Available Credits</CardTitle>
@@ -135,7 +172,6 @@ export default function DashboardPage() {
             )}
           </p>
 
-          {/* Plan selector + Buy button */}
           {userEmail && (
             <div className="mt-6">
               <label className="block text-sm font-medium mb-2">
@@ -154,7 +190,10 @@ export default function DashboardPage() {
               </select>
 
               <div className="mt-4">
-                <BuyCreditsButton planId={selectedPlan} userEmail={userEmail} />
+                <BuyCreditsButton
+                  planId={selectedPlan}
+                  userEmail={userEmail}
+                />
               </div>
             </div>
           )}
@@ -215,12 +254,10 @@ export default function DashboardPage() {
               <CardTitle>Original</CardTitle>
             </CardHeader>
             <CardContent>
-              <Image
+              <img
                 src={originalUrl}
-                width={400}
-                height={300}
                 alt="original"
-                className="rounded-lg shadow-sm max-w-full h-auto"
+                className="rounded-lg shadow-sm"
               />
               {stats && (
                 <p className="text-sm mt-2 text-gray-600">
@@ -238,12 +275,10 @@ export default function DashboardPage() {
             <CardContent>
               {optimizedUrl ? (
                 <>
-                  <Image
+                  <img
                     src={optimizedUrl}
-                    width={400}
-                    height={300}
                     alt="optimized"
-                    className="rounded-lg shadow-sm max-w-full h-auto"
+                    className="rounded-lg shadow-sm"
                   />
                   {stats && (
                     <p className="text-sm mt-2 text-green-600">
@@ -255,13 +290,12 @@ export default function DashboardPage() {
                       %)
                     </p>
                   )}
-                  <a
-                    href={optimizedUrl}
-                    download={`optimized.${format}`}
+                  <Button
+                    onClick={handleDownload}
                     className="inline-block mt-3 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                   >
                     ⬇ Download
-                  </a>
+                  </Button>
                 </>
               ) : (
                 <p className="text-gray-500">Processing...</p>
@@ -270,66 +304,6 @@ export default function DashboardPage() {
           </Card>
         </div>
       )}
-
-      {/* Usage History */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Optimizations</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {history.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm border">
-                <thead>
-                  <tr className="bg-gray-50 text-left border-b">
-                    <th className="p-3">Format</th>
-                    <th className="p-3">Before</th>
-                    <th className="p-3">After</th>
-                    <th className="p-3">Saved</th>
-                    <th className="p-3">Date</th>
-                    <th className="p-3 text-center">Download</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((log) => {
-                    const saved = (
-                      ((log.sizeBefore - log.sizeAfter) / log.sizeBefore) *
-                      100
-                    ).toFixed(1);
-
-                    return (
-                      <tr key={log.id} className="border-b hover:bg-gray-50">
-                        <td className="p-3">{log.format.toUpperCase()}</td>
-                        <td className="p-3">
-                          {(log.sizeBefore / 1024).toFixed(1)} KB
-                        </td>
-                        <td className="p-3">
-                          {(log.sizeAfter / 1024).toFixed(1)} KB
-                        </td>
-                        <td className="p-3 text-green-600">{saved}%</td>
-                        <td className="p-3">
-                          {new Date(log.createdAt).toLocaleString()}
-                        </td>
-                        <td className="p-3 text-center">
-                          <a
-                            href={log.fileUrl}
-                            download={`optimized-${log.id}.${log.format}`}
-                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-                          >
-                            ⬇
-                          </a>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="text-gray-500">No history yet</p>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }
