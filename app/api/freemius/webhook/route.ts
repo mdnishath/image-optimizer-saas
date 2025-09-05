@@ -9,6 +9,7 @@ const planCredits: Record<string, number> = {
   "34243": 1000000, // Optimizer 1M
 };
 
+// ✅ Verify Freemius signature
 function verifySignature(payload: string, signature: string | null): boolean {
   if (!signature) return false;
   const hmac = crypto.createHmac(
@@ -22,8 +23,9 @@ function verifySignature(payload: string, signature: string | null): boolean {
 export async function POST(req: Request) {
   try {
     const rawBody = await req.text();
-    const signature = req.headers.get("x-freemius-signature");
+    const signature = req.headers.get("x-freemius-signature"); // ✅ correct header
 
+    // Verify signature
     if (!verifySignature(rawBody, signature)) {
       console.error("❌ Invalid Freemius signature");
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
@@ -35,14 +37,7 @@ export async function POST(req: Request) {
     const planId = body.plan_id || body.plan?.id;
     const licenseKey = body.license?.key;
 
-    console.log(
-      "📩 Freemius event:",
-      event,
-      "plan:",
-      planId,
-      "email:",
-      userEmail
-    );
+    console.log("📩 Freemius event received:", event, planId, userEmail);
 
     if (!userEmail) {
       return NextResponse.json({ error: "No user email" }, { status: 400 });
@@ -50,9 +45,10 @@ export async function POST(req: Request) {
 
     const credits = planCredits[planId ?? ""] ?? 0;
 
+    // ✅ Handle subscription or payment
     if (event === "subscription_created" || event === "payment_completed") {
       if (credits > 0) {
-        await prisma.user.upsert({
+        const updated = await prisma.user.upsert({
           where: { email: userEmail },
           update: {
             credits: { increment: credits },
@@ -64,23 +60,30 @@ export async function POST(req: Request) {
             apiKey: licenseKey ?? null,
           },
         });
-        console.log(`✅ Added ${credits} credits to ${userEmail}`);
+        console.log(
+          `✅ User updated: ${updated.email}, credits: ${updated.credits}`
+        );
       }
     }
 
+    // ✅ Handle license activation
     if (event === "license_activated" && licenseKey) {
-      await prisma.user.upsert({
+      const updated = await prisma.user.upsert({
         where: { email: userEmail },
         update: { apiKey: licenseKey },
         create: { email: userEmail, apiKey: licenseKey, credits: 0 },
       });
-      console.log(`🔑 License key saved for ${userEmail}`);
+      console.log(`🔑 License key saved for: ${updated.email}`);
     }
-
     // Optional: log all webhook events
     await (prisma as any).webhookEvent.create({
       data: { event, payload: body },
     });
+
+    // ✅ Save webhook for debugging
+    // await prisma.webhookEvent.create({
+    //   data: { event, payload: body },
+    // });
 
     return NextResponse.json({ ok: true });
   } catch (err) {
