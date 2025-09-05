@@ -8,9 +8,9 @@ interface FreemiusWebhookBody {
   plan?: { id: string };
   objects?: {
     user?: { email: string; public_key?: string };
-    cart?: { email?: string; plan_id?: string };
+    subscription?: { plan_id?: string };
+    license?: { secret_key?: string };
   };
-  license?: { key: string };
 }
 
 function computeSignature(payload: string): string {
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
     console.log("📬 Signature from Freemius:", receivedSignature);
     console.log("🧮 Signature we computed:", expectedSignature);
 
-    // Accept unsigned events like user.created (for free plans)
+    // Signature handling
     if (receivedSignature) {
       if (receivedSignature.toLowerCase() !== expectedSignature.toLowerCase()) {
         console.error("❌ Invalid signature - mismatch");
@@ -44,21 +44,24 @@ export async function POST(req: Request) {
       }
       console.log("✅ Signature valid");
     } else {
-      console.warn("⚠️ No signature received, accepting unsigned event");
+      console.warn(
+        "⚠️ No signature received, accepting unsigned event (sandbox/test)"
+      );
     }
 
+    // Parse body
     const body = JSON.parse(rawBody) as FreemiusWebhookBody;
-    const { type, plan_id, plan, objects, license } = body;
-
-    const userEmail = objects?.user?.email || objects?.cart?.email || null;
+    const { type, plan_id, plan, objects } = body;
+    const userEmail = objects?.user?.email;
+    const licenseKey = objects?.license?.secret_key;
 
     if (!userEmail) {
-      console.warn("⚠️ No email in this event, ignoring");
+      console.warn("⚠️ No user email, ignoring event");
       return NextResponse.json({ ok: true });
     }
 
-    // Decide credits based on plan
-    const planId = plan_id || plan?.id || objects?.cart?.plan_id;
+    // Plan detection
+    const planId = plan_id || plan?.id || objects?.subscription?.plan_id;
     let credits = 0;
     switch (planId) {
       case "34244":
@@ -78,22 +81,22 @@ export async function POST(req: Request) {
         break;
     }
 
-    // Only handle real lifecycle events
+    // Handle lifecycle events
     if (type === "subscription.created" || type === "payment.completed") {
       if (credits > 0) {
         await prisma.user.upsert({
           where: { email: userEmail },
           update: {
             credits: { increment: credits },
-            apiKey: license?.key ?? objects?.user?.public_key ?? undefined,
+            apiKey: licenseKey ?? objects?.user?.public_key ?? undefined,
           },
           create: {
             email: userEmail,
             credits,
-            apiKey: license?.key ?? objects?.user?.public_key ?? null,
+            apiKey: licenseKey ?? objects?.user?.public_key ?? null,
           },
         });
-        console.log(`✅ Updated credits for ${userEmail} (+${credits})`);
+        console.log(`✅ Credits updated for ${userEmail} (+${credits})`);
       }
     }
 
@@ -107,16 +110,7 @@ export async function POST(req: Request) {
           apiKey: objects?.user?.public_key ?? null,
         },
       });
-      console.log(`✅ Created free user ${userEmail} with ${credits} credits`);
-    }
-
-    // Ignore irrelevant events like cart.created, cart.abandoned, etc.
-    if (
-      type !== "subscription.created" &&
-      type !== "payment.completed" &&
-      type !== "user.created"
-    ) {
-      console.log(`ℹ️ Ignored event type: ${type}`);
+      console.log(`✅ Free user created ${userEmail} with ${credits} credits`);
     }
 
     return NextResponse.json({ ok: true });
