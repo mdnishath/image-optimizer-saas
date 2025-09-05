@@ -11,7 +11,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY! // ✅ anon key for browser
 );
 
 export default function DashboardPage() {
@@ -31,7 +31,6 @@ export default function DashboardPage() {
   const accessToken =
     typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
 
-  // ✅ Load credits
   useEffect(() => {
     if (!accessToken) {
       router.push("/login");
@@ -44,7 +43,6 @@ export default function DashboardPage() {
       .then((data) => setCredits(data.credits));
   }, [router, accessToken]);
 
-  // ✅ Optimize handler
   const handleOptimize = async () => {
     if (!file || !accessToken) return;
 
@@ -55,7 +53,7 @@ export default function DashboardPage() {
 
     let res;
     if (file.size < 4 * 1024 * 1024) {
-      // Small file → send binary directly
+      // Small file → send directly
       res = await fetch("/api/images/optimize", {
         method: "POST",
         headers: {
@@ -66,7 +64,7 @@ export default function DashboardPage() {
         body: file,
       });
     } else {
-      // Big file → upload to Supabase first
+      // Big file → upload to Supabase first with anon key
       const { data, error } = await supabase.storage
         .from("temp-uploads")
         .upload(`raw/${Date.now()}-${file.name}`, file, { upsert: false });
@@ -76,6 +74,7 @@ export default function DashboardPage() {
         return;
       }
 
+      // Send only path to server (server uses service key safely)
       res = await fetch("/api/images/optimize", {
         method: "POST",
         headers: {
@@ -92,8 +91,6 @@ export default function DashboardPage() {
 
     if (res.ok) {
       const data = await res.json();
-
-      // ✅ Handle either base64 (small) or Supabase URL (big)
       setOptimizedUrl(data.downloadUrl || data.file);
       setStats({ before: data.sizeBefore, after: data.sizeAfter });
 
@@ -166,7 +163,6 @@ export default function DashboardPage() {
             accept="image/*"
             onChange={(e) => setFile(e.target.files?.[0] || null)}
           />
-
           <div className="flex gap-4">
             <select
               value={format}
@@ -178,7 +174,6 @@ export default function DashboardPage() {
               <option value="jpeg">JPEG</option>
               <option value="png">PNG</option>
             </select>
-
             <div className="flex-1">
               <label className="text-sm font-medium">Quality: {quality}</label>
               <input
@@ -191,7 +186,6 @@ export default function DashboardPage() {
               />
             </div>
           </div>
-
           <Button className="w-full" onClick={handleOptimize} disabled={!file}>
             Optimize
           </Button>
@@ -212,7 +206,6 @@ export default function DashboardPage() {
                 alt="original"
                 width={400}
                 height={300}
-                className="rounded-lg"
               />
               {stats && (
                 <p className="text-sm mt-2">
@@ -221,7 +214,6 @@ export default function DashboardPage() {
               )}
             </CardContent>
           </Card>
-
           <Card>
             <CardHeader>
               <CardTitle>Optimized</CardTitle>
@@ -229,11 +221,9 @@ export default function DashboardPage() {
             <CardContent>
               {optimizedUrl ? (
                 <>
-                  <Image
+                  <img
                     src={optimizedUrl}
                     alt="optimized"
-                    width={400}
-                    height={300}
                     className="rounded-lg"
                   />
                   {stats && (
@@ -261,65 +251,6 @@ export default function DashboardPage() {
           </Card>
         </div>
       )}
-
-      {/* History */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Optimizations</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {history.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm border">
-                <thead>
-                  <tr className="bg-gray-50 border-b">
-                    <th className="p-3">Format</th>
-                    <th className="p-3">Before</th>
-                    <th className="p-3">After</th>
-                    <th className="p-3">Saved</th>
-                    <th className="p-3">Date</th>
-                    <th className="p-3 text-center">Download</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((log) => {
-                    const saved = (
-                      ((log.sizeBefore - log.sizeAfter) / log.sizeBefore) *
-                      100
-                    ).toFixed(1);
-                    return (
-                      <tr key={log.id} className="border-b">
-                        <td className="p-3">{log.format.toUpperCase()}</td>
-                        <td className="p-3">
-                          {(log.sizeBefore / 1024).toFixed(1)} KB
-                        </td>
-                        <td className="p-3">
-                          {(log.sizeAfter / 1024).toFixed(1)} KB
-                        </td>
-                        <td className="p-3 text-green-600">{saved}%</td>
-                        <td className="p-3">
-                          {new Date(log.createdAt).toLocaleString()}
-                        </td>
-                        <td className="p-3 text-center">
-                          <a
-                            href={log.fileUrl}
-                            download={`optimized-${log.id}.${log.format}`}
-                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-                          >
-                            ⬇
-                          </a>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="text-gray-500">No history yet</p>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }
