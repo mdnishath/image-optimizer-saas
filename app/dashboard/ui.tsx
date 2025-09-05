@@ -7,12 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import Image from "next/image";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY! // ✅ anon key for browser
-);
+import { plans } from "@/lib/plans";
+import BuyCreditsButton from "@/components/ui/BuyCreditsButton";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -27,22 +23,34 @@ export default function DashboardPage() {
     null
   );
   const [history, setHistory] = useState<any[]>([]);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState(plans[0].id);
 
   const accessToken =
     typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
 
+  // ✅ Load credits + user info
   useEffect(() => {
     if (!accessToken) {
       router.push("/login");
       return;
     }
-    fetch("/api/user/credits", {
+    fetch("/api/user/me", {
       headers: { Authorization: `Bearer ${accessToken}` },
     })
       .then((res) => res.json())
-      .then((data) => setCredits(data.credits));
+      .then((data) => {
+        if (data?.email) {
+          setUserEmail(data.email);
+          setCredits(data.credits);
+        } else {
+          router.push("/login");
+        }
+      })
+      .catch(() => router.push("/login"));
   }, [router, accessToken]);
 
+  // ✅ Optimize handler
   const handleOptimize = async () => {
     if (!file || !accessToken) return;
 
@@ -51,9 +59,10 @@ export default function DashboardPage() {
     setStats(null);
     setProgress(20);
 
-    let res;
+    let res: Response;
+
     if (file.size < 4 * 1024 * 1024) {
-      // Small file → send directly
+      // Small file → direct optimize
       res = await fetch("/api/images/optimize", {
         method: "POST",
         headers: {
@@ -64,17 +73,22 @@ export default function DashboardPage() {
         body: file,
       });
     } else {
-      // Big file → upload to Supabase first with anon key
-      const { data, error } = await supabase.storage
-        .from("temp-uploads")
-        .upload(`raw/${Date.now()}-${file.name}`, file, { upsert: false });
+      // Big file → upload first via secure API
+      const formData = new FormData();
+      formData.append("file", file);
 
-      if (error) {
-        alert("Upload error: " + error.message);
+      const uploadRes = await fetch("/api/images/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) {
+        alert("Upload failed: " + uploadData.error);
         return;
       }
 
-      // Send only path to server (server uses service key safely)
+      // Then optimize by path
       res = await fetch("/api/images/optimize", {
         method: "POST",
         headers: {
@@ -83,7 +97,7 @@ export default function DashboardPage() {
           "x-format": format,
           "x-quality": quality.toString(),
         },
-        body: JSON.stringify({ path: data.path }),
+        body: JSON.stringify({ path: uploadData.path }),
       });
     }
 
@@ -127,6 +141,7 @@ export default function DashboardPage() {
           variant="outline"
           onClick={() => {
             localStorage.removeItem("accessToken");
+            localStorage.removeItem("refreshToken");
             router.push("/login");
           }}
         >
@@ -134,7 +149,7 @@ export default function DashboardPage() {
         </Button>
       </div>
 
-      {/* Credits */}
+      {/* Credits + Buy Button */}
       <Card>
         <CardHeader>
           <CardTitle>Available Credits</CardTitle>
@@ -148,6 +163,30 @@ export default function DashboardPage() {
             </p>
           ) : (
             "Loading..."
+          )}
+
+          {/* Plan selector + Freemius Buy button */}
+          {userEmail && (
+            <div className="mt-6">
+              <label className="block text-sm font-medium mb-2">
+                Choose a Plan
+              </label>
+              <select
+                value={selectedPlan}
+                onChange={(e) => setSelectedPlan(e.target.value)}
+                className="border rounded px-3 py-2"
+              >
+                {plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.name} – {plan.price}
+                  </option>
+                ))}
+              </select>
+
+              <div className="mt-4">
+                <BuyCreditsButton planId={selectedPlan} userEmail={userEmail} />
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -163,6 +202,7 @@ export default function DashboardPage() {
             accept="image/*"
             onChange={(e) => setFile(e.target.files?.[0] || null)}
           />
+
           <div className="flex gap-4">
             <select
               value={format}
@@ -174,6 +214,7 @@ export default function DashboardPage() {
               <option value="jpeg">JPEG</option>
               <option value="png">PNG</option>
             </select>
+
             <div className="flex-1">
               <label className="text-sm font-medium">Quality: {quality}</label>
               <input
@@ -186,6 +227,7 @@ export default function DashboardPage() {
               />
             </div>
           </div>
+
           <Button className="w-full" onClick={handleOptimize} disabled={!file}>
             Optimize
           </Button>
@@ -214,6 +256,7 @@ export default function DashboardPage() {
               )}
             </CardContent>
           </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>Optimized</CardTitle>
@@ -221,9 +264,11 @@ export default function DashboardPage() {
             <CardContent>
               {optimizedUrl ? (
                 <>
-                  <img
+                  <Image
                     src={optimizedUrl}
                     alt="optimized"
+                    width={400}
+                    height={300}
                     className="rounded-lg"
                   />
                   {stats && (
