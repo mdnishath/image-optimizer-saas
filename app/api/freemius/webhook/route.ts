@@ -4,10 +4,12 @@ import crypto from "crypto";
 
 interface FreemiusWebhookBody {
   type: string;
-  user_id?: string;
   plan_id?: string;
   plan?: { id: string };
-  objects?: { user?: { email: string; public_key?: string } };
+  objects?: {
+    user?: { email: string; public_key?: string };
+    cart?: { email?: string; plan_id?: string };
+  };
   license?: { key: string };
 }
 
@@ -26,13 +28,12 @@ export async function POST(req: Request) {
     const receivedSignature = req.headers.get("x-fs-signature");
     const expectedSignature = computeSignature(rawBody);
 
-    // Log everything
     console.log("📩 Freemius webhook received");
     console.log("📦 Raw body:", rawBody);
     console.log("📬 Signature from Freemius:", receivedSignature);
     console.log("🧮 Signature we computed:", expectedSignature);
 
-    // Allow unsigned events (like user.created)
+    // Accept unsigned events like user.created (for free plans)
     if (receivedSignature) {
       if (receivedSignature.toLowerCase() !== expectedSignature.toLowerCase()) {
         console.error("❌ Invalid signature - mismatch");
@@ -46,17 +47,18 @@ export async function POST(req: Request) {
       console.warn("⚠️ No signature received, accepting unsigned event");
     }
 
-    // Parse body
     const body = JSON.parse(rawBody) as FreemiusWebhookBody;
     const { type, plan_id, plan, objects, license } = body;
-    const userEmail = objects?.user?.email;
+
+    const userEmail = objects?.user?.email || objects?.cart?.email || null;
 
     if (!userEmail) {
-      return NextResponse.json({ error: "No user email" }, { status: 400 });
+      console.warn("⚠️ No email in this event, ignoring");
+      return NextResponse.json({ ok: true });
     }
 
     // Decide credits based on plan
-    const planId = plan_id || plan?.id;
+    const planId = plan_id || plan?.id || objects?.cart?.plan_id;
     let credits = 0;
     switch (planId) {
       case "34244":
@@ -76,7 +78,7 @@ export async function POST(req: Request) {
         break;
     }
 
-    // Only update on subscription.created / payment.completed
+    // Only handle real lifecycle events
     if (type === "subscription.created" || type === "payment.completed") {
       if (credits > 0) {
         await prisma.user.upsert({
@@ -95,7 +97,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // Optional: create user record when free plan joined
     if (type === "user.created" && credits > 0) {
       await prisma.user.upsert({
         where: { email: userEmail },
@@ -107,6 +108,15 @@ export async function POST(req: Request) {
         },
       });
       console.log(`✅ Created free user ${userEmail} with ${credits} credits`);
+    }
+
+    // Ignore irrelevant events like cart.created, cart.abandoned, etc.
+    if (
+      type !== "subscription.created" &&
+      type !== "payment.completed" &&
+      type !== "user.created"
+    ) {
+      console.log(`ℹ️ Ignored event type: ${type}`);
     }
 
     return NextResponse.json({ ok: true });
