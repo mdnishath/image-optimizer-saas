@@ -6,23 +6,22 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // must have upload+delete perms
+  process.env.SUPABASE_SERVICE_ROLE_KEY! // server-only
 );
 
 export const config = {
   api: {
     bodyParser: false,
-    sizeLimit: "50mb", // safeguard, Supabase handles larger
+    sizeLimit: "50mb", // safeguard
   },
 };
 
-// helper: upload buffer to Supabase temp bucket
-async function uploadToSupabase(buffer: Buffer, filename: string) {
-  const bucket = "temp-uploads"; // create this bucket in Supabase
-  const { data, error } = await supabase.storage
+// helper: upload buffer to Supabase
+async function uploadToSupabase(bucket: string, buffer: Buffer, filename: string, contentType: string) {
+  const { error } = await supabase.storage
     .from(bucket)
     .upload(filename, buffer, {
-      contentType: "application/octet-stream",
+      contentType,
       upsert: true,
     });
 
@@ -32,7 +31,7 @@ async function uploadToSupabase(buffer: Buffer, filename: string) {
     data: { publicUrl },
   } = supabase.storage.from(bucket).getPublicUrl(filename);
 
-  return { bucket, key: filename, publicUrl };
+  return publicUrl;
 }
 
 export async function POST(req: Request) {
@@ -60,7 +59,7 @@ export async function POST(req: Request) {
       const res = await fetch(fileUrl);
       inputBuffer = Buffer.from(await res.arrayBuffer());
 
-      // cleanup
+      // cleanup info
       const parts = new URL(fileUrl).pathname.split("/");
       cleanupBucket = parts[2]; // bucket
       cleanupKey = parts.slice(3).join("/"); // path
@@ -80,19 +79,6 @@ export async function POST(req: Request) {
 
     if (!inputBuffer || inputBuffer.length === 0) {
       return NextResponse.json({ error: "Empty file" }, { status: 400 });
-    }
-
-    // 🚦 Check size and offload big files to Supabase
-    if (inputBuffer.length > 4 * 1024 * 1024 && !cleanupBucket) {
-      const filename = `${Date.now()}-${Math.random().toString(36).slice(2)}.bin`;
-      const { bucket, key, publicUrl } = await uploadToSupabase(
-        inputBuffer,
-        filename
-      );
-      const res = await fetch(publicUrl);
-      inputBuffer = Buffer.from(await res.arrayBuffer());
-      cleanupBucket = bucket;
-      cleanupKey = key;
     }
 
     const sizeBefore = inputBuffer.length;
@@ -115,16 +101,27 @@ export async function POST(req: Request) {
       data: { credits: { decrement: 1 } },
     });
 
-    // 🧹 Cleanup temp file from Supabase
+    // 🧹 Cleanup original file from Supabase if applicable
     if (cleanupBucket && cleanupKey) {
       await supabase.storage.from(cleanupBucket).remove([cleanupKey]);
-      console.log(`🗑️ Deleted temp file from Supabase: ${cleanupBucket}/${cleanupKey}`);
+      console.log(`🗑️ Deleted original: ${cleanupBucket}/${cleanupKey}`);
     }
 
-    // 🔀 Detect client
+    // 📤 Upload optimized file to Supabase
+    const optimizedFilename = `optimized/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}.${requestedFormat}`;
+    const optimizedUrl = await uploadToSupabase(
+      "temp-uploads", // ✅ use the same bucket
+      outputBuffer,
+      optimizedFilename,
+      `image/${requestedFormat}`
+    );
+
+    // 🔀 Detect WP plugin vs Dashboard
     const usedApiKey = req.headers.get("x-api-key");
     if (usedApiKey) {
-      // WP plugin → return binary
+      // WP plugin → return direct file stream
       return new Response(new Uint8Array(outputBuffer), {
         headers: {
           "Content-Type": `image/${requestedFormat}`,
@@ -132,14 +129,13 @@ export async function POST(req: Request) {
         },
       });
     } else {
-      // Dashboard → return base64 JSON
-      const base64 = Buffer.from(outputBuffer).toString("base64");
+      // Dashboard → return download link (instead of base64 for big files)
       return NextResponse.json({
         message: "Image optimized successfully",
         sizeBefore,
         sizeAfter,
         savedPercent: (((sizeBefore - sizeAfter) / sizeBefore) * 100).toFixed(1),
-        file: `data:image/${requestedFormat};base64,${base64}`,
+        downloadUrl: optimizedUrl,
         format: requestedFormat,
       });
     }
