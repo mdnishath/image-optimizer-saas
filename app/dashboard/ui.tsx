@@ -229,9 +229,11 @@ export default function DashboardPage() {
             <CardContent>
               {optimizedUrl ? (
                 <>
-                  <img
+                  <Image
                     src={optimizedUrl}
                     alt="optimized"
+                    width={400}
+                    height={300}
                     className="rounded-lg"
                   />
                   {stats && (
