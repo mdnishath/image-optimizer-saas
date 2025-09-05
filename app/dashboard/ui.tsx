@@ -6,93 +6,96 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { plans } from "@/lib/plans";
-import BuyCreditsButton from "@/components/ui/BuyCreditsButton";
+import Image from "next/image";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 export default function DashboardPage() {
   const router = useRouter();
   const [credits, setCredits] = useState<number | null>(null);
-  const [selectedPlan, setSelectedPlan] = useState(plans[0].id);
   const [file, setFile] = useState<File | null>(null);
   const [format, setFormat] = useState("webp");
   const [quality, setQuality] = useState(80);
   const [originalUrl, setOriginalUrl] = useState<string | null>(null);
   const [optimizedUrl, setOptimizedUrl] = useState<string | null>(null);
-  const [optimizedPath, setOptimizedPath] = useState<string | null>(null); // ✅ store Supabase file path
   const [progress, setProgress] = useState(0);
   const [stats, setStats] = useState<{ before: number; after: number } | null>(
     null
   );
   const [history, setHistory] = useState<any[]>([]);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   const accessToken =
     typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
 
-  // ✅ Load user info
+  // ✅ Load credits
   useEffect(() => {
     if (!accessToken) {
       router.push("/login");
       return;
     }
-
-    fetch("/api/user/me", {
+    fetch("/api/user/credits", {
       headers: { Authorization: `Bearer ${accessToken}` },
     })
       .then((res) => res.json())
-      .then((data) => {
-        if (data?.email) {
-          setUserEmail(data.email);
-          setCredits(data.credits);
-        } else {
-          router.push("/login");
-        }
-      })
-      .catch(() => router.push("/login"));
+      .then((data) => setCredits(data.credits));
   }, [router, accessToken]);
 
-  // ✅ Optimize image
+  // ✅ Optimize handler
   const handleOptimize = async () => {
     if (!file || !accessToken) return;
-
-    // If there’s an old optimized file on Supabase → delete it first
-    if (optimizedPath) {
-      await fetch("/api/images/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: optimizedPath }),
-      });
-      setOptimizedPath(null);
-    }
 
     setOriginalUrl(URL.createObjectURL(file));
     setOptimizedUrl(null);
     setStats(null);
-    setProgress(15);
+    setProgress(20);
 
-    const res = await fetch("/api/images/optimize", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "x-format": format,
-        "x-quality": quality.toString(),
-      },
-      body: file,
-    });
+    let res;
+    if (file.size < 4 * 1024 * 1024) {
+      // Small file → send binary directly
+      res = await fetch("/api/images/optimize", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "x-format": format,
+          "x-quality": quality.toString(),
+        },
+        body: file,
+      });
+    } else {
+      // Big file → upload to Supabase first
+      const { data, error } = await supabase.storage
+        .from("temp-uploads")
+        .upload(`raw/${Date.now()}-${file.name}`, file, { upsert: false });
+
+      if (error) {
+        alert("Upload error: " + error.message);
+        return;
+      }
+
+      res = await fetch("/api/images/optimize", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "x-format": format,
+          "x-quality": quality.toString(),
+        },
+        body: JSON.stringify({ path: data.path }),
+      });
+    }
 
     setProgress(60);
 
     if (res.ok) {
       const data = await res.json();
 
-      const finalUrl = data.downloadUrl || data.file;
-      setOptimizedUrl(finalUrl);
+      // ✅ Handle either base64 (small) or Supabase URL (big)
+      setOptimizedUrl(data.downloadUrl || data.file);
       setStats({ before: data.sizeBefore, after: data.sizeAfter });
-
-      // Save Supabase path if returned
-      if (data.path) {
-        setOptimizedPath(data.path);
-      }
 
       const newLog = {
         id: Date.now(),
@@ -100,40 +103,21 @@ export default function DashboardPage() {
         sizeBefore: data.sizeBefore,
         sizeAfter: data.sizeAfter,
         createdAt: new Date().toISOString(),
-        fileUrl: finalUrl,
+        fileUrl: data.downloadUrl || data.file,
       };
       setHistory((prev) => [newLog, ...prev]);
 
       setProgress(100);
       setTimeout(() => setProgress(0), 1500);
 
-      // refresh credits
+      // Refresh credits
       const creditRes = await fetch("/api/user/credits", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       const creditData = await creditRes.json();
       setCredits(creditData.credits);
-    }
-  };
-
-  // ✅ Trigger delete on download
-  const handleDownload = async () => {
-    if (optimizedUrl) {
-      const link = document.createElement("a");
-      link.href = optimizedUrl;
-      link.download = `optimized.${format}`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      if (optimizedPath) {
-        await fetch("/api/images/delete", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: optimizedPath }),
-        });
-        setOptimizedPath(null);
-      }
+    } else {
+      alert("Optimization failed");
     }
   };
 
@@ -141,12 +125,11 @@ export default function DashboardPage() {
     <div className="max-w-6xl mx-auto p-6 space-y-8">
       {/* Header */}
       <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+        <h1 className="text-3xl font-bold">Dashboard</h1>
         <Button
           variant="outline"
           onClick={() => {
             localStorage.removeItem("accessToken");
-            localStorage.removeItem("refreshToken");
             router.push("/login");
           }}
         >
@@ -154,48 +137,20 @@ export default function DashboardPage() {
         </Button>
       </div>
 
-      {/* Credits + Buy */}
+      {/* Credits */}
       <Card>
         <CardHeader>
           <CardTitle>Available Credits</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-lg">
-            {credits !== null ? (
-              <>
-                You have{" "}
-                <span className="font-semibold text-green-600">{credits}</span>{" "}
-                credits left
-              </>
-            ) : (
-              "Loading..."
-            )}
-          </p>
-
-          {userEmail && (
-            <div className="mt-6">
-              <label className="block text-sm font-medium mb-2">
-                Choose a Plan
-              </label>
-              <select
-                value={selectedPlan}
-                onChange={(e) => setSelectedPlan(e.target.value)}
-                className="border rounded px-3 py-2"
-              >
-                {plans.map((plan) => (
-                  <option key={plan.id} value={plan.id}>
-                    {plan.name} – {plan.price}
-                  </option>
-                ))}
-              </select>
-
-              <div className="mt-4">
-                <BuyCreditsButton
-                  planId={selectedPlan}
-                  userEmail={userEmail}
-                />
-              </div>
-            </div>
+          {credits !== null ? (
+            <p>
+              You have{" "}
+              <span className="font-semibold text-green-600">{credits}</span>{" "}
+              credits left
+            </p>
+          ) : (
+            "Loading..."
           )}
         </CardContent>
       </Card>
@@ -240,34 +195,33 @@ export default function DashboardPage() {
           <Button className="w-full" onClick={handleOptimize} disabled={!file}>
             Optimize
           </Button>
-
           {progress > 0 && <Progress value={progress} />}
         </CardContent>
       </Card>
 
-      {/* Preview Section */}
+      {/* Preview */}
       {originalUrl && (
         <div className="grid md:grid-cols-2 gap-8">
-          {/* Original */}
           <Card>
             <CardHeader>
               <CardTitle>Original</CardTitle>
             </CardHeader>
             <CardContent>
-              <img
+              <Image
                 src={originalUrl}
                 alt="original"
-                className="rounded-lg shadow-sm"
+                width={400}
+                height={300}
+                className="rounded-lg"
               />
               {stats && (
-                <p className="text-sm mt-2 text-gray-600">
+                <p className="text-sm mt-2">
                   {(stats.before / 1024).toFixed(1)} KB
                 </p>
               )}
             </CardContent>
           </Card>
 
-          {/* Optimized */}
           <Card>
             <CardHeader>
               <CardTitle>Optimized</CardTitle>
@@ -278,7 +232,7 @@ export default function DashboardPage() {
                   <img
                     src={optimizedUrl}
                     alt="optimized"
-                    className="rounded-lg shadow-sm"
+                    className="rounded-lg"
                   />
                   {stats && (
                     <p className="text-sm mt-2 text-green-600">
@@ -290,12 +244,13 @@ export default function DashboardPage() {
                       %)
                     </p>
                   )}
-                  <Button
-                    onClick={handleDownload}
+                  <a
+                    href={optimizedUrl}
+                    download={`optimized.${format}`}
                     className="inline-block mt-3 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                   >
                     ⬇ Download
-                  </Button>
+                  </a>
                 </>
               ) : (
                 <p className="text-gray-500">Processing...</p>
@@ -304,6 +259,65 @@ export default function DashboardPage() {
           </Card>
         </div>
       )}
+
+      {/* History */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent Optimizations</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {history.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border">
+                <thead>
+                  <tr className="bg-gray-50 border-b">
+                    <th className="p-3">Format</th>
+                    <th className="p-3">Before</th>
+                    <th className="p-3">After</th>
+                    <th className="p-3">Saved</th>
+                    <th className="p-3">Date</th>
+                    <th className="p-3 text-center">Download</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((log) => {
+                    const saved = (
+                      ((log.sizeBefore - log.sizeAfter) / log.sizeBefore) *
+                      100
+                    ).toFixed(1);
+                    return (
+                      <tr key={log.id} className="border-b">
+                        <td className="p-3">{log.format.toUpperCase()}</td>
+                        <td className="p-3">
+                          {(log.sizeBefore / 1024).toFixed(1)} KB
+                        </td>
+                        <td className="p-3">
+                          {(log.sizeAfter / 1024).toFixed(1)} KB
+                        </td>
+                        <td className="p-3 text-green-600">{saved}%</td>
+                        <td className="p-3">
+                          {new Date(log.createdAt).toLocaleString()}
+                        </td>
+                        <td className="p-3 text-center">
+                          <a
+                            href={log.fileUrl}
+                            download={`optimized-${log.id}.${log.format}`}
+                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                          >
+                            ⬇
+                          </a>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-gray-500">No history yet</p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
