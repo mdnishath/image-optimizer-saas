@@ -1,17 +1,14 @@
 import { NextResponse } from "next/server";
-
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 
-interface FreemiusWebhookBody {
-  event: string;
-  user?: { email: string };
-  plan_id?: string;
-  plan?: { id: string };
-  license?: { key: string };
-}
+const planCredits: Record<string, number> = {
+  "34244": 100, // Free
+  "34240": 5000, // Optimizer 5K
+  "34242": 20000, // Optimizer 20K
+  "34243": 1000000, // Optimizer 1M
+};
 
-// verify Freemius signature
 function verifySignature(payload: string, signature: string | null): boolean {
   if (!signature) return false;
   const hmac = crypto.createHmac(
@@ -25,71 +22,65 @@ function verifySignature(payload: string, signature: string | null): boolean {
 export async function POST(req: Request) {
   try {
     const rawBody = await req.text();
-    const signature = req.headers.get("x-fs-signature");
+    const signature = req.headers.get("x-freemius-signature");
 
     if (!verifySignature(rawBody, signature)) {
       console.error("❌ Invalid Freemius signature");
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
 
-    const body = JSON.parse(rawBody) as FreemiusWebhookBody;
-    console.log("📩 Freemius webhook payload:", body);
+    const body = JSON.parse(rawBody);
+    const event = body.event?.toLowerCase().replace(".", "_") ?? "unknown";
+    const userEmail = body.user?.email;
+    const planId = body.plan_id || body.plan?.id;
+    const licenseKey = body.license?.key;
 
-    const { event, user, plan_id, plan, license } = body;
-    if (!user?.email) {
+    console.log(
+      "📩 Freemius event:",
+      event,
+      "plan:",
+      planId,
+      "email:",
+      userEmail
+    );
+
+    if (!userEmail) {
       return NextResponse.json({ error: "No user email" }, { status: 400 });
     }
 
-    // normalize planId
-    const planId = plan_id || plan?.id;
+    const credits = planCredits[planId ?? ""] ?? 0;
 
-    let credits = 0;
-    switch (planId) {
-      case "34244":
-        credits = 100;
-        break; // Free plan
-      case "34240":
-        credits = 5000;
-        break; // Optimizer 5K
-      case "34242":
-        credits = 20000;
-        break; // Optimizer 20K
-      case "34243":
-        credits = 1000000;
-        break; // Optimizer 1M
-      default:
-        console.warn("⚠️ Unknown planId:", planId);
-    }
-
-    // handle subscription & payment events
-    if (event === "subscription.created" || event === "payment.completed") {
+    if (event === "subscription_created" || event === "payment_completed") {
       if (credits > 0) {
-        const updated = await prisma.user.upsert({
-          where: { email: user.email },
+        await prisma.user.upsert({
+          where: { email: userEmail },
           update: {
             credits: { increment: credits },
-            apiKey: license?.key ?? undefined,
+            apiKey: licenseKey ?? undefined,
           },
           create: {
-            email: user.email,
+            email: userEmail,
             credits,
-            apiKey: license?.key ?? null,
+            apiKey: licenseKey ?? null,
           },
         });
-        console.log("✅ User credits updated:", updated.email, updated.credits);
+        console.log(`✅ Added ${credits} credits to ${userEmail}`);
       }
     }
 
-    // handle license activation (updates apiKey)
-    if (event === "license.activated") {
-      if (license?.key) {
-        const updated = await prisma.user.update({
-          where: { email: user.email },
-          data: { apiKey: license.key },
-        });
-        console.log("🔑 License key saved for:", updated.email);
-      }
+    if (event === "license_activated" && licenseKey) {
+      await prisma.user.upsert({
+        where: { email: userEmail },
+        update: { apiKey: licenseKey },
+        create: { email: userEmail, apiKey: licenseKey, credits: 0 },
+      });
+      console.log(`🔑 License key saved for ${userEmail}`);
     }
+
+    // Optional: log all webhook events
+    await (prisma as any).webhookEvent.create({
+      data: { event, payload: body },
+    });
 
     return NextResponse.json({ ok: true });
   } catch (err) {
