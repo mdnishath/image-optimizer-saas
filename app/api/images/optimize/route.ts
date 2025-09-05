@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-
+import { prisma } from "@/lib/prisma";
 import { optimizeImage } from "@/lib/image";
 import { getUserFromRequest } from "@/lib/auth";
-import prisma from "@/lib/prisma";
 
 export async function POST(req: Request) {
   try {
@@ -16,9 +15,26 @@ export async function POST(req: Request) {
       );
     }
 
-    // 📥 File
-    const arrayBuffer = await req.arrayBuffer();
-    const inputBuffer = Buffer.from(arrayBuffer);
+    let inputBuffer: Buffer;
+
+    const contentType = req.headers.get("content-type") || "";
+    if (contentType.includes("multipart/form-data")) {
+      // 📥 Handle WP plugin sending FormData
+      const formData = await req.formData();
+      const file = formData.get("file") as File | null;
+      if (!file) {
+        return NextResponse.json(
+          { error: "No file uploaded" },
+          { status: 400 }
+        );
+      }
+      inputBuffer = Buffer.from(await file.arrayBuffer());
+    } else {
+      // 📥 Handle dashboard sending raw binary
+      const arrayBuffer = await req.arrayBuffer();
+      inputBuffer = Buffer.from(arrayBuffer);
+    }
+
     const sizeBefore = inputBuffer.length;
 
     // ⚙️ Options
