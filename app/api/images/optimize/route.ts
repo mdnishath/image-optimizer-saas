@@ -3,6 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { optimizeImage } from "@/lib/image";
 import { getUserFromRequest } from "@/lib/auth";
 
+// ✅ Allow larger uploads (default is ~4MB in Next.js/Vercel)
+export const config = {
+  api: {
+    bodyParser: false,
+    sizeLimit: "20mb", // adjust as needed (e.g., "50mb")
+  },
+};
+
 export async function POST(req: Request) {
   try {
     // 🔑 Identify user (via session OR Freemius license key)
